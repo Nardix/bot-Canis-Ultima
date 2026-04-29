@@ -140,6 +140,41 @@ async def on_ready():
     print(f'Bot online come {bot.user}!')
     bot.add_view(GeneraCoppieView())
 
+    print("Controllo eventuali sondaggi non gestiti...")
+    try:
+        # Recupera il canale cercapartite
+        canale = bot.get_channel(CANALE_CERCAPARTITE_ID) or await bot.fetch_channel(CANALE_CERCAPARTITE_ID)
+        
+        if canale and hasattr(canale, 'threads'):
+            # Prende tutti i thread (post) attivi e li ordina dal più recente al più vecchio usando l'ID
+            threads_attivi = sorted(canale.threads, key=lambda t: t.id, reverse=True)
+            
+            if threads_attivi:
+                ultimo_thread = threads_attivi[0] # Seleziona SOLO l'ultimo post
+                
+                messaggio_sondaggio = None
+                bot_ha_gia_risposto = False
+
+                # Scansiona gli ultimi 50 messaggi di quell'ultimo post
+                async for msg in ultimo_thread.history(limit=50):
+                    if msg.author == bot.user:
+                        bot_ha_gia_risposto = True # Il bot ha già scritto qui dentro
+                    
+                    if msg.poll and not messaggio_sondaggio:
+                        messaggio_sondaggio = msg # Trova il sondaggio
+                
+                # Se c'è un sondaggio MA il bot non ha mai scritto nel thread (era offline)
+                if messaggio_sondaggio and not bot_ha_gia_risposto:
+                    print(f"Sondaggio orfano recuperato nel post: {ultimo_thread.name}")
+                    await ultimo_thread.send(
+                        "👋 Ciao! Ho visto il sondaggio.\nQuando le iscrizioni sono terminate, clicca qui sotto per generare le coppie casuali tra chi ha votato 'Si'.",
+                        view=GeneraCoppieView()
+                    )
+                else:
+                    print("L'ultimo post è già stato gestito o non contiene sondaggi.")
+    except Exception as e:
+        print(f"Errore durante il controllo dei sondaggi: {e}")
+
 @bot.event
 async def on_message(message):
     # Evita che il bot risponda a se stesso o ad altri bot
