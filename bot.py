@@ -91,21 +91,44 @@ class GeneraCoppieView(discord.ui.View):
             avversario_trovato = None
             indice_avversario = -1
 
-            # Cerca un avversario non presente nello storico di p1
+            # 🥇 TENTATIVO 1: Match Perfetto (Reciproco)
+            # p1 non ha mai sfidato p2, E p2 non ha mai sfidato p1.
             for i, candidato in enumerate(pool):
-                if candidato not in storico[p1]:
+                storia_candidato = storico.get(candidato, [])
+                if candidato not in storico[p1] and p1 not in storia_candidato:
                     avversario_trovato = candidato
                     indice_avversario = i
                     break
             
-            if avversario_trovato is not None:
-                # Abbiamo trovato un avversario nuovo! Lo togliamo dal pool.
-                p2 = pool.pop(indice_avversario)
-            else:
-                # p1 ha già sfidato tutti quelli rimasti nel pool.
-                # Azzeriamo la sua memoria e prendiamo il primo disponibile!
-                storico[p1] = []
-                p2 = pool.pop(0)
+            # 🥈 TENTATIVO 2: Match Asimmetrico (p1 è "nuovo" per p2, ma p2 si ricorda di p1)
+            # Succede se le memorie si sono desincronizzate. Accontentiamo almeno uno dei due.
+            if avversario_trovato is None:
+                for i, candidato in enumerate(pool):
+                    if candidato not in storico[p1]:
+                        avversario_trovato = candidato
+                        indice_avversario = i
+                        break
+
+            # 🥉 TENTATIVO 3: Reset di p1 (p1 ha finito le opzioni, azzeriamolo)
+            # Prima di pescare a caso, cerchiamo un candidato a cui fa piacere sfidare p1!
+            if avversario_trovato is None:
+                storico[p1] = [] 
+                for i, candidato in enumerate(pool):
+                    storia_candidato = storico.get(candidato, [])
+                    if p1 not in storia_candidato:
+                        avversario_trovato = candidato
+                        indice_avversario = i
+                        break
+
+            # 💀 TENTATIVO 4: Disperazione totale (Rematch forzato)
+            # p1 ha sfidato tutti, e tutti i rimasti nel pool hanno già sfidato p1.
+            # Prendiamo il primo disponibile e pace.
+            if avversario_trovato is None:
+                avversario_trovato = pool[0]
+                indice_avversario = 0
+
+            # Assegniamo l'avversario e lo togliamo definitivamente dal pool
+            p2 = pool.pop(indice_avversario)
             
             # Assicuriamoci che p2 esista nello storico
             if p2 not in storico:
