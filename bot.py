@@ -62,18 +62,22 @@ class GeneraCoppieView(discord.ui.View):
             return
 
         utenti_si = []
+        trovato_si = False
 
         # 2. Cerca la risposta "Si" o "Sì" all'interno del sondaggio
         for answer in messaggio_sondaggio.poll.answers:
             testo_risposta = answer.text.strip().lower() if answer.text else ""
             if testo_risposta in ["si", "sì"]:
+                trovato_si = True
                 async for user in answer.voters():
                     if not user.bot:
                         utenti_si.append(user.mention)
                 break
-            else:
-                await interaction.response.send_message("Per favore, rifai il sondaggio mettendo 'si' come opzione di risposta", ephemeral=True)
-                return
+        
+        if not trovato_si:
+            # Qui devi usare interaction.followup.send se avevi già disabilitato il bottone con defer/edit_message prima!
+            await interaction.response.send_message("Per favore, rifai il sondaggio mettendo 'si' come opzione di risposta", ephemeral=True)
+            return
         
         if not utenti_si:
             await interaction.response.send_message("Nessuno ha ancora votato 'Sì' al sondaggio.", ephemeral=True)
@@ -238,13 +242,13 @@ async def on_message(message):
 async def add_match(interaction: discord.Interaction, giocatore1: discord.Member, giocatore2: discord.Member):
     
     # Controllo di sicurezza: evitare che uno sfidi se stesso
-    if giocatore1.id == giocatore2.id:
+    if giocatore1.mention == giocatore2.mention:
         await interaction.response.send_message("⛔ Non puoi far scontrare un giocatore contro se stesso!", ephemeral=True)
         return
 
     # Trasformiamo subito gli oggetti Member in ID testuali per il JSON
-    id1 = str(giocatore1.id)
-    id2 = str(giocatore2.id)
+    id1 = str(giocatore1.mention)
+    id2 = str(giocatore2.mention)
 
     # Apriamo il file in sicurezza con il lucchetto
     async with memoria_lock:
