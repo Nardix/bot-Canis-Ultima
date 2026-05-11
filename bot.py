@@ -1,9 +1,11 @@
 import discord
 from discord.ext import commands
+from discord import app_commands
 import random
 import os
 from dotenv import load_dotenv
 import json
+import asyncio
 
 load_dotenv()
 intents = discord.Intents.default()
@@ -13,11 +15,10 @@ intents.guilds = True
 
 bot = commands.Bot(command_prefix='!', intents=intents)
 
-# --- DA MODIFICARE ---
-#CANALE_CERCAPARTITE_ID = os.getenv('ID')
 id_canale_str = os.getenv('ID')
 CANALE_CERCAPARTITE_ID = int(id_canale_str.strip('\'"'))
-# ---------------------
+
+memoria_lock = asyncio.Lock()
 
 # Nome del file dove il bot salverà la memoria degli scontri
 FILE_MEMORIA = "storico_match.json"
@@ -69,7 +70,10 @@ class GeneraCoppieView(discord.ui.View):
                 async for user in answer.voters():
                     if not user.bot:
                         utenti_si.append(user.mention)
-                break 
+                break
+            else:
+                await interaction.response.send_message("Per favore, rifai il sondaggio mettendo 'si' come opzione di risposta", ephemeral=True)
+                return
         
         if not utenti_si:
             await interaction.response.send_message("Nessuno ha ancora votato 'Sì' al sondaggio.", ephemeral=True)
@@ -163,6 +167,13 @@ async def on_ready():
     print(f'Bot online come {bot.user}!')
     bot.add_view(GeneraCoppieView())
 
+    # --- SINCRONIZZA I COMANDI SLASH ---
+    try:
+        synced = await bot.tree.sync()
+        print(f"Sincronizzati {len(synced)} comandi slash.")
+    except Exception as e:
+        print(f"Errore nella sincronizzazione dei comandi slash: {e}")
+
     print("Controllo eventuali sondaggi non gestiti...")
     try:
         # Recupera il canale cercapartite
@@ -216,6 +227,45 @@ async def on_message(message):
 
     # Necessario per far funzionare eventuali altri comandi testuali (se deciderai di aggiungerli in futuro)
     await bot.process_commands(message)
+
+@bot.tree.command(name="add", description="Aggiunge manualmente una coppia")
+@app_commands.describe(
+    giocatore1="Seleziona il primo giocatore",
+    giocatore2="Seleziona il secondo giocatore"
+)
+# Questa riga nasconde il comando a chi non è amministratore!
+@app_commands.default_permissions(administrator=True) 
+async def add_match(interaction: discord.Interaction, giocatore1: discord.Member, giocatore2: discord.Member):
+    
+    # Controllo di sicurezza: evitare che uno sfidi se stesso
+    if giocatore1.id == giocatore2.id:
+        await interaction.response.send_message("⛔ Non puoi far scontrare un giocatore contro se stesso!", ephemeral=True)
+        return
+
+    # Trasformiamo subito gli oggetti Member in ID testuali per il JSON
+    id1 = str(giocatore1.id)
+    id2 = str(giocatore2.id)
+
+    # Apriamo il file in sicurezza con il lucchetto
+    async with memoria_lock:
+        storico = carica_memoria()
+
+        # Ci assicuriamo che entrambi i giocatori esistano nel dizionario
+        if id1 not in storico:
+            storico[id1] = []
+        if id2 not in storico:
+            storico[id2] = []
+
+        # Aggiungiamo i rispettivi ID incrociati (evitando doppioni)
+        if id2 not in storico[id1]:
+            storico[id1].append(id2)
+        if id1 not in storico[id2]:
+            storico[id2].append(id1)
+
+        salva_memoria(storico)
+
+    # Diamo conferma visiva dell'avvenuta operazione
+    await interaction.response.send_message(f"✅ **Match registrato!**\n{giocatore1.mention} vs {giocatore2.mention}")
 
 # INSERISCI IL TUO TOKEN
 token = os.getenv('TOKEN').strip('\'"')
