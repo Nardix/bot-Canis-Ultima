@@ -1,0 +1,6 @@
+__pycache__
+/test
+.env.dummy
+.gitignore
+prova.py
+README.md

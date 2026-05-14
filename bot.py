@@ -6,6 +6,8 @@ import os
 from dotenv import load_dotenv
 import json
 import asyncio
+import networkx as nx
+import itertools
 
 load_dotenv()
 intents = discord.Intents.default()
@@ -23,6 +25,7 @@ memoria_lock = asyncio.Lock()
 # Nome del file dove il bot salverà la memoria degli scontri
 FILE_MEMORIA = "storico_match.json"
 
+
 def carica_memoria():
     """Carica lo storico dei match dal file JSON."""
     if os.path.exists(FILE_MEMORIA):
@@ -30,35 +33,54 @@ def carica_memoria():
             return json.load(f)
     return {}
 
+
 def salva_memoria(storico):
     """Salva lo storico dei match nel file JSON."""
     with open(FILE_MEMORIA, "w") as f:
         json.dump(storico, f, indent=4)
 
+
 class GeneraCoppieView(discord.ui.View):
     def __init__(self):
-        super().__init__(timeout=None) 
+        super().__init__(timeout=None)
+        self.sta_generando = False
 
     @discord.ui.button(label="Genera Coppie", style=discord.ButtonStyle.success, custom_id="btn_genera_coppie")
     async def genera_button(self, interaction: discord.Interaction, button: discord.ui.Button):
         thread = interaction.channel
 
-        # 🛡️ CONTROLLO PERMESSI: Verifica se chi ha cliccato è un Amministratore
-        if isinstance(interaction.user, discord.Member) and not interaction.user.guild_permissions.administrator:
-            # ephemeral=True significa che il messaggio di errore lo vede solo l'utente che ha cliccato
-            await interaction.response.send_message("⛔ Solo gli amministratori del server possono generare le coppie!", ephemeral=True)
+        # 🛑 CONTROLLO LUCCHETTO: Se qualcuno ha già cliccato, blocca subito l'esecuzione!
+        if self.sta_generando:
             return
         
+        # Chiudiamo il lucchetto! Da questo momento nessun altro click passerà.
+        self.sta_generando = True
+
+        # 🛡️ CONTROLLO PERMESSI (Lo facciamo subito, così è istantaneo)
+        if isinstance(interaction.user, discord.Member) and not interaction.user.guild_permissions.administrator:
+            await interaction.response.send_message("⛔ Solo gli amministratori del server possono generare le coppie!", ephemeral=True)
+            self.sta_generando = False # Riapriamo il lucchetto perché l'azione è fallita
+            return
+        
+        # ⏳ PREVENZIONE TIMEOUT: Diciamo a Discord di non annullare il comando se ci mettiamo più di 3 secondi
+        await interaction.response.defer()
+
+        button.disabled = True
+        await interaction.message.edit(view=self)
+
         # 1. Cerca l'ultimo sondaggio inviato nel thread
         messaggio_sondaggio = None
-        # Legge gli ultimi 50 messaggi del post cercando quello con il sondaggio
         async for msg in thread.history(limit=50):
             if msg.poll:
                 messaggio_sondaggio = msg
                 break 
         
         if not messaggio_sondaggio:
-            await interaction.response.send_message("Non riesco a trovare nessun sondaggio in questo post.", ephemeral=True)
+            self.sta_generando = False # Riapriamo il lucchetto perché l'azione è fallita
+            button.disabled = False
+            await interaction.message.edit(view=self)
+            # NB: Dopo aver usato defer(), usiamo SEMPRE followup.send
+            await interaction.followup.send("Non riesco a trovare nessun sondaggio in questo post.", ephemeral=True) 
             return
 
         utenti_si = []
@@ -75,110 +97,86 @@ class GeneraCoppieView(discord.ui.View):
                 break
         
         if not trovato_si:
-            # Qui devi usare interaction.followup.send se avevi già disabilitato il bottone con defer/edit_message prima!
-            await interaction.response.send_message("Per favore, rifai il sondaggio mettendo 'si' come opzione di risposta", ephemeral=True)
+            self.sta_generando = False # Riapriamo il lucchetto perché l'azione è fallita
+            button.disabled = False
+            await interaction.message.edit(view=self)
+            await interaction.followup.send("Per favore, rifai il sondaggio mettendo 'si' come opzione di risposta.", ephemeral=True)
             return
         
         if not utenti_si:
-            await interaction.response.send_message("Nessuno ha ancora votato 'Sì' al sondaggio.", ephemeral=True)
+            self.sta_generando = False # Riapriamo il lucchetto perché l'azione è fallita
+            button.disabled = False
+            await interaction.message.edit(view=self)
+            await interaction.followup.send("Nessuno ha ancora votato 'Sì' al sondaggio.", ephemeral=True)
             return
         
-        # 🧠 ALGORITMO DI MATCHMAKING INTELLIGENTE
-        storico = carica_memoria()
-        random.shuffle(utenti_si) # Mischia per casualità
-        pool = list(utenti_si)
-        coppie_formate = []
-
-        while len(pool) >= 2:
-            p1 = pool.pop(0)
+        if len(utenti_si) < 2:
+            self.sta_generando = False # Riapriamo il lucchetto perché l'azione è fallita
+            button.disabled = False
+            await interaction.message.edit(view=self)
+            await interaction.followup.send("❌ Servono almeno 2 partecipanti per generare i match!", ephemeral=True)
+            return
+        
+        async with memoria_lock:
+            storico = carica_memoria()
             
-            # Assicuriamoci che p1 esista nello storico
-            if p1 not in storico:
-                storico[p1] = []
+            # ==========================================
+            # INIZIO ALGORITMO MATCHMAKING 
+            # ==========================================
+            G = nx.Graph()
+            G.add_nodes_from(utenti_si)
 
-            avversario_trovato = None
-            indice_avversario = -1
-
-            # 🥇 TENTATIVO 1: Match Perfetto (Reciproco)
-            # p1 non ha mai sfidato p2, E p2 non ha mai sfidato p1.
-            for i, candidato in enumerate(pool):
-                storia_candidato = storico.get(candidato, [])
-                if candidato not in storico[p1] and p1 not in storia_candidato:
-                    avversario_trovato = candidato
-                    indice_avversario = i
-                    break
+            base_dinamica = len(utenti_si) + 1
             
-            # 🥈 TENTATIVO 2: Match Asimmetrico (p1 è "nuovo" per p2, ma p2 si ricorda di p1)
-            # Succede se le memorie si sono desincronizzate. Accontentiamo almeno uno dei due.
-            if avversario_trovato is None:
-                for i, candidato in enumerate(pool):
-                    if candidato not in storico[p1]:
-                        avversario_trovato = candidato
-                        indice_avversario = i
-                        break
-
-            # 🥉 TENTATIVO 3: Reset di p1 (p1 ha finito le opzioni, azzeriamolo)
-            # Prima di pescare a caso, cerchiamo un candidato a cui fa piacere sfidare p1!
-            if avversario_trovato is None:
-                storico[p1] = [] 
-                for i, candidato in enumerate(pool):
-                    storia_candidato = storico.get(candidato, [])
-                    if p1 not in storia_candidato:
-                        avversario_trovato = candidato
-                        indice_avversario = i
-                        break
-
-            # 💀 TENTATIVO 4: Disperazione totale (Rematch forzato)
-            # p1 ha sfidato tutti, e tutti i rimasti nel pool hanno già sfidato p1.
-            # Prendiamo il primo disponibile e pace.
-            if avversario_trovato is None:
-                avversario_trovato = pool[0]
-                indice_avversario = 0
-
-            # Assegniamo l'avversario e lo togliamo definitivamente dal pool
-            p2 = pool.pop(indice_avversario)
+            # Attenzione: se ha votato una sola persona, combinazioni restituirà vuoto e gestirà il dispari in automatico
+            for p1, p2 in itertools.combinations(utenti_si, 2):
+                volte_giocate = storico.get(p1, []).count(p2)
+                peso_totale = (base_dinamica ** volte_giocate) * 1000 + random.randint(0, 500)
+                G.add_edge(p1, p2, weight=peso_totale)
             
-            # Assicuriamoci che p2 esista nello storico
-            if p2 not in storico:
-                storico[p2] = []
+            matchup_ottimali = nx.min_weight_matching(G, weight='weight')
+            
+            giocatori_matchati = set(itertools.chain.from_iterable(matchup_ottimali))
+            giocatori_in_panchina = list(set(utenti_si) - giocatori_matchati)
+            
+            coppie_formate = []
 
-            # Salviamo il match nelle rispettive memorie, EVITANDO I DOPPIONI
-            if p2 not in storico[p1]:
+            for p1, p2 in matchup_ottimali:
+                volte_giocate = storico.get(p1, []).count(p2)
+                
+                if p1 not in storico:
+                    storico[p1] = []
+                if p2 not in storico:
+                    storico[p2] = []
+
                 storico[p1].append(p2)
-            
-            if p1 not in storico[p2]:
                 storico[p2].append(p1)
 
-            # Aggiungiamo alla lista testuale usando il formato menzione <@ID>
-            coppie_formate.append(f"⚔️ <{p1}> **VS** <{p2}>")
+                coppie_formate.append(f"⚔️ {p1} **VS** {p2}")
 
-        # Gestione del giocatore dispari
-        if len(pool) == 1:
-            p_dispari = pool[0]
-            coppie_formate.append(f"🛋️ <{p_dispari}> (Senza avversario - Dispari)")
+            if giocatori_in_panchina:
+                p_dispari = giocatori_in_panchina[0]
+                coppie_formate.append(f"🛋️ {p_dispari} (Senza avversario - Dispari)")
 
-        # Salva la nuova memoria su file
-        salva_memoria(storico)
+            salva_memoria(storico)
 
+        # Invio della risposta finale
         risposta = "**🏆 Le iscrizioni sono chiuse! Ecco le coppie: 🏆**\n\n" + "\n".join(coppie_formate)
         
-        button.disabled = True
-        await interaction.message.edit(view=self)
-        await interaction.response.send_message(risposta)
+        # Sostituito response.send_message con followup.send per rispettare il defer()
+        await interaction.followup.send(risposta)
+
 
 @bot.event
 async def on_ready():
-    print(f'Bot online come {bot.user}!')
     bot.add_view(GeneraCoppieView())
 
     # --- SINCRONIZZA I COMANDI SLASH ---
     try:
-        synced = await bot.tree.sync()
-        print(f"Sincronizzati {len(synced)} comandi slash.")
+        await bot.tree.sync()
     except Exception as e:
         print(f"Errore nella sincronizzazione dei comandi slash: {e}")
 
-    print("Controllo eventuali sondaggi non gestiti...")
     try:
         # Recupera il canale cercapartite
         canale = bot.get_channel(CANALE_CERCAPARTITE_ID) or await bot.fetch_channel(CANALE_CERCAPARTITE_ID)
@@ -203,7 +201,6 @@ async def on_ready():
                 
                 # Se c'è un sondaggio MA il bot non ha mai scritto nel thread (era offline)
                 if messaggio_sondaggio and not bot_ha_gia_risposto:
-                    print(f"Sondaggio orfano recuperato nel post: {ultimo_thread.name}")
                     await ultimo_thread.send(
                         "👋 Ciao! Ho visto il sondaggio.\nQuando le iscrizioni sono terminate, clicca qui sotto per generare le coppie casuali tra chi ha votato 'Si'.",
                         view=GeneraCoppieView()
@@ -212,6 +209,7 @@ async def on_ready():
                     print("L'ultimo post è già stato gestito o non contiene sondaggi.")
     except Exception as e:
         print(f"Errore durante il controllo dei sondaggi: {e}")
+
 
 @bot.event
 async def on_message(message):
@@ -231,6 +229,7 @@ async def on_message(message):
 
     # Necessario per far funzionare eventuali altri comandi testuali (se deciderai di aggiungerli in futuro)
     await bot.process_commands(message)
+
 
 @bot.tree.command(name="add", description="Aggiunge manualmente una coppia")
 @app_commands.describe(
@@ -270,6 +269,46 @@ async def add_match(interaction: discord.Interaction, giocatore1: discord.Member
 
     # Diamo conferma visiva dell'avvenuta operazione
     await interaction.response.send_message(f"✅ **Match registrato!**\n{giocatore1.mention} vs {giocatore2.mention}")
+
+
+@bot.tree.command(name="remove", description="Rimuove manualmente una coppia")
+@app_commands.describe(
+    giocatore1="Seleziona il primo giocatore",
+    giocatore2="Seleziona il secondo giocatore"
+)
+@app_commands.default_permissions(administrator=True)
+async def remove_match(interaction: discord.Interaction, giocatore1: discord.Member, giocatore2: discord.Member):
+    
+    if giocatore1.mention == giocatore2.mention:
+        await interaction.response.send_message("⛔ Non puoi rimuovere un match contro se stesso!", ephemeral=True)
+        return
+    
+    id1 = str(giocatore1.mention)
+    id2 = str(giocatore2.mention)
+
+    async with memoria_lock:
+        storico = carica_memoria()
+
+        match_rimosso = False
+
+        # 3. PREVENZIONE KEYERROR: Controlliamo PRIMA se id1 esiste nel dizionario
+        if id1 in storico and id2 in storico[id1]:
+            storico[id1].remove(id2)
+            match_rimosso = True
+            
+        # Facciamo lo stesso controllo incrociato per id2
+        if id2 in storico and id1 in storico[id2]:
+            storico[id2].remove(id1)
+            match_rimosso = True
+
+        # Se abbiamo modificato qualcosa, salviamo il file
+        if match_rimosso:
+            salva_memoria(storico)
+            await interaction.response.send_message(f"✅ **Match rimosso con successo!**\nCancellato lo scontro tra {giocatore1.mention} e {giocatore2.mention}.")
+        else:
+            # Se non c'era nessun match salvato tra i due
+            await interaction.response.send_message(f"⚠️ **Nessun match trovato!**\n{giocatore1.mention} e {giocatore2.mention} non si erano mai sfidati.")
+
 
 # INSERISCI IL TUO TOKEN
 token = os.getenv('TOKEN').strip('\'"')
