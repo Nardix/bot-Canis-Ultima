@@ -310,6 +310,21 @@ async def remove_match(interaction: discord.Interaction, giocatore1: discord.Mem
             await interaction.response.send_message(f"⚠️ **Nessun match trovato!**\n{giocatore1.mention} e {giocatore2.mention} non si erano mai sfidati.")
 
 
+@bot.tree.command(name="campi", description="Crea i campi e il loro numero")
+@app_commands.describe(
+    numero_coppie="Seleziona il numero di coppie partecipanti",
+)
+@app_commands.default_permissions(administrator=True)
+async def campi_random(interaction: discord.Interaction, numero_coppie: int):
+
+    campi = ["Volkus","Mondo Tomba"]
+
+    for i in range(numero_coppie):
+        campo_scelto = random.choice(campi)
+        random_number = random.randint(1, 6)
+        await interaction.response.send_message(f"Campo per la coppia {i+1}: **{campo_scelto}** (Numero: {random_number})")
+
+
 # INSERISCI IL TUO TOKEN
 token = os.getenv('TOKEN').strip('\'"')
 if token:
