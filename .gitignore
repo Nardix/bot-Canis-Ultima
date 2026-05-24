@@ -1,5 +1,6 @@
 .env
 __pycache__/
 storico_match.json
+stato_killteam.json
 /test
 prova.py

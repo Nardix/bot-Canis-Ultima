@@ -1,5 +1,5 @@
 import discord
-from discord.ext import commands
+from discord.ext import commands, tasks
 from discord import app_commands
 import random
 import os
@@ -8,6 +8,7 @@ import json
 import asyncio
 import networkx as nx
 import itertools
+from playwright.async_api import async_playwright
 
 load_dotenv()
 intents = discord.Intents.default()
@@ -19,11 +20,15 @@ bot = commands.Bot(command_prefix='!', intents=intents)
 
 id_canale_str = os.getenv('ID')
 CANALE_CERCAPARTITE_ID = int(id_canale_str.strip('\'"'))
+news_id_str = os.getenv('NEWS')
+CHANNEL_ID = int(news_id_str.strip('\'"'))
+URL_WARCOM = "https://www.warhammer-community.com/en-gb/setting/kill-team/"
 
 memoria_lock = asyncio.Lock()
 
 # Nome del file dove il bot salverà la memoria degli scontri
 FILE_MEMORIA = "storico_match.json"
+FILE_STATO = "stato_killteam.json"
 
 
 def carica_memoria():
@@ -167,9 +172,101 @@ class GeneraCoppieView(discord.ui.View):
         await interaction.followup.send(risposta)
 
 
+async def get_latest_news():
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=True)
+        page = await browser.new_page()
+        
+        try:
+            await page.goto(URL_WARCOM, wait_until="networkidle")
+            section = page.locator('section', has=page.locator('h2', has_text="All Kill Team News"))
+            list_container = section.locator('ul.row.flex')
+            await list_container.wait_for(state="visible", timeout=15000)
+            
+            first_li = list_container.locator('li').first
+            await first_li.wait_for(state="visible", timeout=10000)
+            
+            news_data = await first_li.evaluate('''(li) => {
+                const aTag = li.querySelector('a[href]');
+                const href = aTag ? aTag.getAttribute('href') : '';
+                
+                const titleTag = li.querySelector('h3, h4, h5, [class*="heading"], [class*="title"]');
+                const title = titleTag ? titleTag.innerText.trim() : 'Titolo non trovato';
+                
+                let dateText = "Data sconosciuta";
+                const timeTag = li.querySelector('time');
+                if (timeTag) {
+                    dateText = timeTag.innerText.trim();
+                } else {
+                    const match = li.innerText.match(/\\d{2}\\s+[A-Za-z]{3}\\s+\\d{2}/);
+                    if (match) {
+                        dateText = match[0];
+                    }
+                }
+                
+                return { title: title, href: href, date: dateText };
+            }''')
+            
+            link = news_data['href']
+            if link and not link.startswith("http"):
+                link = f"https://www.warhammer-community.com{link}"
+            elif not link:
+                link = "Link non trovato"
+                
+            return {"title": news_data['title'], "link": link, "date": news_data['date']}
+            
+        except Exception as e:
+            print(f"Errore Playwright: {e}")
+            return None
+        finally:
+            await browser.close()
+
+
+@tasks.loop(minutes=60) # Controlla ogni ora (puoi modificare l'intervallo)
+async def warcom_news_loop():
+    print("Controllo nuove notizie Kill Team in background...")
+    latest_news = await get_latest_news()
+    
+    if not latest_news or latest_news['link'] == "Link non trovato":
+        return
+
+    # Gestione file di stato locale
+    if os.path.exists(FILE_STATO):
+        with open(FILE_STATO, 'r') as f:
+            stato = json.load(f)
+    else:
+        stato = {"ultimo_link": ""}
+
+    # Se la notizia è nuova, inviala al canale
+    if latest_news['link'] != stato['ultimo_link']:
+        channel = bot.get_channel(CHANNEL_ID)
+        
+        if channel:
+            messaggio = f"🚨 **Nuova notizia Kill Team!** 🚨\n**{latest_news['title']}** - {latest_news['date']}\n{latest_news['link']}"
+            await channel.send(messaggio)
+            print("Notizia inviata nel canale Discord!")
+            
+            # Aggiorna il JSON solo se l'invio ha successo
+            stato['ultimo_link'] = latest_news['link']
+            with open(FILE_STATO, 'w') as f:
+                json.dump(stato, f)
+        else:
+            print(f"Errore: Impossibile trovare il canale con ID {CHANNEL_ID}")
+    else:
+        print("Nessuna nuova notizia.")
+
+
+@warcom_news_loop.before_loop
+async def before_warcom_news_loop():
+    await bot.wait_until_ready()
+
+
 @bot.event
 async def on_ready():
     bot.add_view(GeneraCoppieView())
+
+    if not warcom_news_loop.is_running():
+        warcom_news_loop.start()
 
     # --- SINCRONIZZA I COMANDI SLASH ---
     try:

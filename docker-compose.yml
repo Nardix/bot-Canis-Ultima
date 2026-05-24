@@ -8,3 +8,4 @@ services:
       # Collega il file dello storico tra la tua macchina e il container
       # In questo modo, se spegni il container, i dati restano sul tuo PC
       - ./storico_match.json:/app/storico_match.json
+      - ./stato_killteam.json:/app/stato_killteam.json

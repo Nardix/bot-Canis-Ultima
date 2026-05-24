@@ -1,5 +1,4 @@
-# Usa un'immagine Python leggera
-FROM python:3.11-slim
+FROM mcr.microsoft.com/playwright/python:v1.60.0-jammy
 
 # Imposta la cartella di lavoro nel container
 WORKDIR /app
