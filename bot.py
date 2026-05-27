@@ -415,11 +415,13 @@ async def remove_match(interaction: discord.Interaction, giocatore1: discord.Mem
 async def campi_random(interaction: discord.Interaction, numero_coppie: int):
 
     campi = ["Volkus","Mondo Tomba"]
+    message = []
 
     for i in range(numero_coppie):
         campo_scelto = random.choice(campi)
         random_number = random.randint(1, 6)
-        await interaction.response.send_message(f"Campo per la coppia {i+1}: **{campo_scelto}** (Numero: {random_number})")
+        message.append(f"⚔️ **Campo per la coppia {i+1}: {campo_scelto}** (Numero: {random_number})")
+    await interaction.response.send_message("Ecco i campi per le coppie:\n" + "\n".join(message))
 
 
 # INSERISCI IL TUO TOKEN
