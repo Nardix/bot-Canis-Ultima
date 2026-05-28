@@ -220,7 +220,7 @@ async def get_latest_news():
             await browser.close()
 
 
-@tasks.loop(minutes=60) # Controlla ogni ora (puoi modificare l'intervallo)
+@tasks.loop(minutes=60)
 async def warcom_news_loop():
     print("Controllo nuove notizie Kill Team in background...")
     latest_news = await get_latest_news()
@@ -228,14 +228,12 @@ async def warcom_news_loop():
     if not latest_news or latest_news['link'] == "Link non trovato":
         return
 
-    # Gestione file di stato locale
     if os.path.exists(FILE_STATO):
         with open(FILE_STATO, 'r') as f:
             stato = json.load(f)
     else:
         stato = {"ultimo_link": ""}
 
-    # Se la notizia è nuova, inviala al canale
     if latest_news['link'] != stato['ultimo_link']:
         channel = bot.get_channel(CHANNEL_ID)
         
@@ -244,7 +242,6 @@ async def warcom_news_loop():
             await channel.send(messaggio)
             print("Notizia inviata nel canale Discord!")
             
-            # Aggiorna il JSON solo se l'invio ha successo
             stato['ultimo_link'] = latest_news['link']
             with open(FILE_STATO, 'w') as f:
                 json.dump(stato, f)
@@ -266,35 +263,30 @@ async def on_ready():
     if not warcom_news_loop.is_running():
         warcom_news_loop.start()
 
-    # --- SINCRONIZZA I COMANDI SLASH ---
     try:
         await bot.tree.sync()
     except Exception as e:
         print(f"Errore nella sincronizzazione dei comandi slash: {e}")
 
     try:
-        # Recupera il canale cercapartite
         canale = bot.get_channel(CANALE_CERCAPARTITE_ID) or await bot.fetch_channel(CANALE_CERCAPARTITE_ID)
         
         if canale and hasattr(canale, 'threads'):
-            # Prende tutti i thread (post) attivi e li ordina dal più recente al più vecchio usando l'ID
             threads_attivi = sorted(canale.threads, key=lambda t: t.id, reverse=True)
             
             if threads_attivi:
-                ultimo_thread = threads_attivi[0] # Seleziona SOLO l'ultimo post
+                ultimo_thread = threads_attivi[0]
                 
                 messaggio_sondaggio = None
                 bot_ha_gia_risposto = False
 
-                # Scansiona gli ultimi 50 messaggi di quell'ultimo post
                 async for msg in ultimo_thread.history(limit=50):
                     if msg.author == bot.user:
-                        bot_ha_gia_risposto = True # Il bot ha già scritto qui dentro
+                        bot_ha_gia_risposto = True
                     
                     if msg.poll and not messaggio_sondaggio:
-                        messaggio_sondaggio = msg # Trova il sondaggio
+                        messaggio_sondaggio = msg
                 
-                # Se c'è un sondaggio MA il bot non ha mai scritto nel thread (era offline)
                 if messaggio_sondaggio and not bot_ha_gia_risposto:
                     await ultimo_thread.send(
                         "👋 Ciao! Ho visto il sondaggio.\nQuando le iscrizioni sono terminate, clicca qui sotto per generare le coppie casuali tra chi ha votato 'Si'.",
@@ -308,21 +300,17 @@ async def on_ready():
 
 @bot.event
 async def on_message(message):
-    # Evita che il bot risponda a se stesso o ad altri bot
     if message.author.bot:
         return
 
-    # Verifica: il messaggio è in un Thread? E quel thread è nel canale cercapartite?
     if isinstance(message.channel, discord.Thread) and message.channel.parent_id == CANALE_CERCAPARTITE_ID:
         
-        # Il bot reagisce SOLO se il messaggio appena inviato contiene effettivamente un sondaggio nativo
         if message.poll:
             await message.channel.send(
                 "👋 Ciao! Ho visto il sondaggio.\nQuando le iscrizioni sono terminate, clicca qui sotto per generare le coppie casuali tra chi ha votato 'Si'.",
                 view=GeneraCoppieView()
             )
 
-    # Necessario per far funzionare eventuali altri comandi testuali (se deciderai di aggiungerli in futuro)
     await bot.process_commands(message)
 
 
@@ -331,30 +319,24 @@ async def on_message(message):
     giocatore1="Seleziona il primo giocatore",
     giocatore2="Seleziona il secondo giocatore"
 )
-# Questa riga nasconde il comando a chi non è amministratore!
 @app_commands.default_permissions(administrator=True) 
 async def add_match(interaction: discord.Interaction, giocatore1: discord.Member, giocatore2: discord.Member):
     
-    # Controllo di sicurezza: evitare che uno sfidi se stesso
     if giocatore1.mention == giocatore2.mention:
         await interaction.response.send_message("⛔ Non puoi far scontrare un giocatore contro se stesso!", ephemeral=True)
         return
 
-    # Trasformiamo subito gli oggetti Member in ID testuali per il JSON
     id1 = str(giocatore1.mention)
     id2 = str(giocatore2.mention)
 
-    # Apriamo il file in sicurezza con il lucchetto
     async with memoria_lock:
         storico = carica_memoria()
 
-        # Ci assicuriamo che entrambi i giocatori esistano nel dizionario
         if id1 not in storico:
             storico[id1] = []
         if id2 not in storico:
             storico[id2] = []
 
-        # Aggiungiamo i rispettivi ID incrociati (evitando doppioni)
         if id2 not in storico[id1]:
             storico[id1].append(id2)
         if id1 not in storico[id2]:
@@ -362,7 +344,6 @@ async def add_match(interaction: discord.Interaction, giocatore1: discord.Member
 
         salva_memoria(storico)
 
-    # Diamo conferma visiva dell'avvenuta operazione
     await interaction.response.send_message(f"✅ **Match registrato!**\n{giocatore1.mention} vs {giocatore2.mention}")
 
 
@@ -386,22 +367,18 @@ async def remove_match(interaction: discord.Interaction, giocatore1: discord.Mem
 
         match_rimosso = False
 
-        # 3. PREVENZIONE KEYERROR: Controlliamo PRIMA se id1 esiste nel dizionario
         if id1 in storico and id2 in storico[id1]:
             storico[id1].remove(id2)
             match_rimosso = True
             
-        # Facciamo lo stesso controllo incrociato per id2
         if id2 in storico and id1 in storico[id2]:
             storico[id2].remove(id1)
             match_rimosso = True
 
-        # Se abbiamo modificato qualcosa, salviamo il file
         if match_rimosso:
             salva_memoria(storico)
             await interaction.response.send_message(f"✅ **Match rimosso con successo!**\nCancellato lo scontro tra {giocatore1.mention} e {giocatore2.mention}.")
         else:
-            # Se non c'era nessun match salvato tra i due
             await interaction.response.send_message(f"⚠️ **Nessun match trovato!**\n{giocatore1.mention} e {giocatore2.mention} non si erano mai sfidati.")
 
 
@@ -423,12 +400,10 @@ async def replace_match(interaction: discord.Interaction, giocatore1: discord.Me
     id2 = str(giocatore2.mention)
     id3 = str(giocatore3.mention)
     id4 = str(giocatore4.mention)
-    #TODO: prende il match tra id1 e id2, lo rimuove, prende il match tra id3 e id4, lo rimuove, poi crea i nuovi match id1 vs id3 e id2 vs id4 (con tutti i controlli del caso)
 
     async with memoria_lock:
         storico = carica_memoria()
 
-        # Rimuoviamo i vecchi match (con i controlli di sicurezza)
         if id1 in storico and id2 in storico[id1]:
             storico[id1].remove(id2)
         if id2 in storico and id1 in storico[id2]:
@@ -438,7 +413,6 @@ async def replace_match(interaction: discord.Interaction, giocatore1: discord.Me
         if id4 in storico and id3 in storico[id4]:
             storico[id4].remove(id3)
 
-        # Aggiungiamo i nuovi match
         if id3 not in storico:
             storico[id3] = []
         if id4 not in storico:
@@ -480,7 +454,6 @@ async def campi_random(interaction: discord.Interaction, numero_coppie: int):
     await interaction.response.send_message("Ecco i campi per le coppie:\n" + "\n".join(message))
 
 
-# INSERISCI IL TUO TOKEN
 token = os.getenv('TOKEN').strip('\'"')
 if token:
     bot.run(token)
