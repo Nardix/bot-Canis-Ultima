@@ -26,7 +26,6 @@ URL_WARCOM = "https://www.warhammer-community.com/en-gb/setting/kill-team/"
 
 memoria_lock = asyncio.Lock()
 
-# Nome del file dove il bot salverà la memoria degli scontri
 FILE_MEMORIA = "storico_match.json"
 FILE_STATO = "stato_killteam.json"
 
@@ -54,26 +53,21 @@ class GeneraCoppieView(discord.ui.View):
     async def genera_button(self, interaction: discord.Interaction, button: discord.ui.Button):
         thread = interaction.channel
 
-        # 🛑 CONTROLLO LUCCHETTO: Se qualcuno ha già cliccato, blocca subito l'esecuzione!
         if self.sta_generando:
             return
         
-        # Chiudiamo il lucchetto! Da questo momento nessun altro click passerà.
         self.sta_generando = True
 
-        # 🛡️ CONTROLLO PERMESSI (Lo facciamo subito, così è istantaneo)
         if isinstance(interaction.user, discord.Member) and not interaction.user.guild_permissions.administrator:
             await interaction.response.send_message("⛔ Solo gli amministratori del server possono generare le coppie!", ephemeral=True)
-            self.sta_generando = False # Riapriamo il lucchetto perché l'azione è fallita
+            self.sta_generando = False
             return
         
-        # ⏳ PREVENZIONE TIMEOUT: Diciamo a Discord di non annullare il comando se ci mettiamo più di 3 secondi
         await interaction.response.defer()
 
         button.disabled = True
         await interaction.message.edit(view=self)
 
-        # 1. Cerca l'ultimo sondaggio inviato nel thread
         messaggio_sondaggio = None
         async for msg in thread.history(limit=50):
             if msg.poll:
@@ -81,17 +75,15 @@ class GeneraCoppieView(discord.ui.View):
                 break 
         
         if not messaggio_sondaggio:
-            self.sta_generando = False # Riapriamo il lucchetto perché l'azione è fallita
+            self.sta_generando = False
             button.disabled = False
             await interaction.message.edit(view=self)
-            # NB: Dopo aver usato defer(), usiamo SEMPRE followup.send
             await interaction.followup.send("Non riesco a trovare nessun sondaggio in questo post.", ephemeral=True) 
             return
 
         utenti_si = []
         trovato_si = False
 
-        # 2. Cerca la risposta "Si" o "Sì" all'interno del sondaggio
         for answer in messaggio_sondaggio.poll.answers:
             testo_risposta = answer.text.strip().lower() if answer.text else ""
             if testo_risposta in ["si", "sì"]:
@@ -102,21 +94,21 @@ class GeneraCoppieView(discord.ui.View):
                 break
         
         if not trovato_si:
-            self.sta_generando = False # Riapriamo il lucchetto perché l'azione è fallita
+            self.sta_generando = False
             button.disabled = False
             await interaction.message.edit(view=self)
             await interaction.followup.send("Per favore, rifai il sondaggio mettendo 'si' come opzione di risposta.", ephemeral=True)
             return
         
         if not utenti_si:
-            self.sta_generando = False # Riapriamo il lucchetto perché l'azione è fallita
+            self.sta_generando = False
             button.disabled = False
             await interaction.message.edit(view=self)
             await interaction.followup.send("Nessuno ha ancora votato 'Sì' al sondaggio.", ephemeral=True)
             return
         
         if len(utenti_si) < 2:
-            self.sta_generando = False # Riapriamo il lucchetto perché l'azione è fallita
+            self.sta_generando = False
             button.disabled = False
             await interaction.message.edit(view=self)
             await interaction.followup.send("❌ Servono almeno 2 partecipanti per generare i match!", ephemeral=True)
@@ -125,15 +117,11 @@ class GeneraCoppieView(discord.ui.View):
         async with memoria_lock:
             storico = carica_memoria()
             
-            # ==========================================
-            # INIZIO ALGORITMO MATCHMAKING 
-            # ==========================================
             G = nx.Graph()
             G.add_nodes_from(utenti_si)
 
             base_dinamica = len(utenti_si) + 1
             
-            # Attenzione: se ha votato una sola persona, combinazioni restituirà vuoto e gestirà il dispari in automatico
             for p1, p2 in itertools.combinations(utenti_si, 2):
                 volte_giocate = storico.get(p1, []).count(p2)
                 peso_totale = (base_dinamica ** volte_giocate) * 1000 + random.randint(0, 500)
@@ -145,6 +133,7 @@ class GeneraCoppieView(discord.ui.View):
             giocatori_in_panchina = list(set(utenti_si) - giocatori_matchati)
             
             coppie_formate = []
+            numero_coppie = 0
 
             for p1, p2 in matchup_ottimali:
                 volte_giocate = storico.get(p1, []).count(p2)
@@ -157,6 +146,7 @@ class GeneraCoppieView(discord.ui.View):
                 storico[p1].append(p2)
                 storico[p2].append(p1)
 
+                numero_coppie += 1
                 coppie_formate.append(f"⚔️ {p1} **VS** {p2}")
 
             if giocatori_in_panchina:
@@ -165,10 +155,18 @@ class GeneraCoppieView(discord.ui.View):
 
             salva_memoria(storico)
 
-        # Invio della risposta finale
         risposta = "**🏆 Le iscrizioni sono chiuse! Ecco le coppie: 🏆**\n\n" + "\n".join(coppie_formate)
+
+        campi = ["Volkus","Mondo Tomba"]
+        message = []
+
+        for i in range(numero_coppie):
+            campo_scelto = random.choice(campi)
+            random_number = random.randint(1, 6)
+            message.append(f"⚔️ **Campo per la coppia {i+1}: {campo_scelto}** (Numero: **{random_number}**)")
+
+        risposta += "\n\n**Ecco i campi per le coppie:**\n\n" + "\n".join(message)
         
-        # Sostituito response.send_message con followup.send per rispettare il defer()
         await interaction.followup.send(risposta)
 
 
@@ -405,6 +403,64 @@ async def remove_match(interaction: discord.Interaction, giocatore1: discord.Mem
         else:
             # Se non c'era nessun match salvato tra i due
             await interaction.response.send_message(f"⚠️ **Nessun match trovato!**\n{giocatore1.mention} e {giocatore2.mention} non si erano mai sfidati.")
+
+
+@bot.tree.command(name="replace", description="Cambia due coppie")
+@app_commands.describe(
+    giocatore1="Seleziona il primo giocatore contro il secondo",
+    giocatore2="Seleziona il secondo giocatore contro il primo",
+    giocatore3="Seleziona il terzo giocatore contro il quarto",
+    giocatore4="Seleziona il quarto giocatore contro il terzo"
+)
+@app_commands.default_permissions(administrator=True)
+async def replace_match(interaction: discord.Interaction, giocatore1: discord.Member, giocatore2: discord.Member, giocatore3: discord.Member, giocatore4: discord.Member):
+    
+    if giocatore1.mention == giocatore2.mention or giocatore3.mention == giocatore4.mention:
+        await interaction.response.send_message("⛔ Non puoi selezionare lo stesso giocatore due volte!", ephemeral=True)
+        return
+    
+    id1 = str(giocatore1.mention)
+    id2 = str(giocatore2.mention)
+    id3 = str(giocatore3.mention)
+    id4 = str(giocatore4.mention)
+    #TODO: prende il match tra id1 e id2, lo rimuove, prende il match tra id3 e id4, lo rimuove, poi crea i nuovi match id1 vs id3 e id2 vs id4 (con tutti i controlli del caso)
+
+    async with memoria_lock:
+        storico = carica_memoria()
+
+        # Rimuoviamo i vecchi match (con i controlli di sicurezza)
+        if id1 in storico and id2 in storico[id1]:
+            storico[id1].remove(id2)
+        if id2 in storico and id1 in storico[id2]:
+            storico[id2].remove(id1)
+        if id3 in storico and id4 in storico[id3]:
+            storico[id3].remove(id4)
+        if id4 in storico and id3 in storico[id4]:
+            storico[id4].remove(id3)
+
+        # Aggiungiamo i nuovi match
+        if id3 not in storico:
+            storico[id3] = []
+        if id4 not in storico:
+            storico[id4] = []
+        if id1 not in storico:
+            storico[id1] = []
+        if id2 not in storico:
+            storico[id2] = []
+
+        if id3 not in storico[id1]:
+            storico[id1].append(id3)
+        if id1 not in storico[id3]:
+            storico[id3].append(id1)
+        
+        if id4 not in storico[id2]:
+            storico[id2].append(id4)
+        if id2 not in storico[id4]:
+            storico[id4].append(id2)
+
+        salva_memoria(storico)
+
+        await interaction.response.send_message(f"✅ **Match sostituiti con successo!**\n{giocatore1.mention} ora sfida {giocatore3.mention}\n{giocatore2.mention} ora sfida {giocatore4.mention}")
 
 
 @bot.tree.command(name="campi", description="Crea i campi e il loro numero")
