@@ -337,10 +337,8 @@ async def add_match(interaction: discord.Interaction, giocatore1: discord.Member
         if id2 not in storico:
             storico[id2] = []
 
-        if id2 not in storico[id1]:
-            storico[id1].append(id2)
-        if id1 not in storico[id2]:
-            storico[id2].append(id1)
+        storico[id1].append(id2)
+        storico[id2].append(id1)
 
         salva_memoria(storico)
 
@@ -382,12 +380,12 @@ async def remove_match(interaction: discord.Interaction, giocatore1: discord.Mem
             await interaction.response.send_message(f"⚠️ **Nessun match trovato!**\n{giocatore1.mention} e {giocatore2.mention} non si erano mai sfidati.")
 
 
-@bot.tree.command(name="replace", description="Cambia due coppie")
+@bot.tree.command(name="replace", description="Cambia due match, specifica il primo giocatore contro il secondo e il terzo contro il quarto")
 @app_commands.describe(
-    giocatore1="Seleziona il primo giocatore contro il secondo",
-    giocatore2="Seleziona il secondo giocatore contro il primo",
-    giocatore3="Seleziona il terzo giocatore contro il quarto",
-    giocatore4="Seleziona il quarto giocatore contro il terzo"
+    giocatore1="Seleziona il primo giocatore contro il secondo del nuovo match",
+    giocatore2="Seleziona il secondo giocatore contro il primo del nuovo match",
+    giocatore3="Seleziona il terzo giocatore contro il quarto del nuovo match",
+    giocatore4="Seleziona il quarto giocatore contro il terzo del nuovo match"
 )
 @app_commands.default_permissions(administrator=True)
 async def replace_match(interaction: discord.Interaction, giocatore1: discord.Member, giocatore2: discord.Member, giocatore3: discord.Member, giocatore4: discord.Member):
@@ -404,37 +402,23 @@ async def replace_match(interaction: discord.Interaction, giocatore1: discord.Me
     async with memoria_lock:
         storico = carica_memoria()
 
-        if id1 in storico and id2 in storico[id1]:
-            storico[id1].remove(id2)
-        if id2 in storico and id1 in storico[id2]:
-            storico[id2].remove(id1)
-        if id3 in storico and id4 in storico[id3]:
-            storico[id3].remove(id4)
-        if id4 in storico and id3 in storico[id4]:
-            storico[id4].remove(id3)
-
-        if id3 not in storico:
-            storico[id3] = []
-        if id4 not in storico:
-            storico[id4] = []
-        if id1 not in storico:
-            storico[id1] = []
-        if id2 not in storico:
-            storico[id2] = []
-
-        if id3 not in storico[id1]:
-            storico[id1].append(id3)
-        if id1 not in storico[id3]:
-            storico[id3].append(id1)
-        
-        if id4 not in storico[id2]:
-            storico[id2].append(id4)
-        if id2 not in storico[id4]:
-            storico[id4].append(id2)
+        if id1 in storico:
+            storico[id1].pop()
+        if id2 in storico:
+            storico[id2].pop()
+        if id3 in storico:
+            storico[id3].pop()
+        if id4 in storico:
+            storico[id4].pop()
+  
+        storico[id1].append(id2)
+        storico[id2].append(id1)
+        storico[id3].append(id4)
+        storico[id4].append(id3)
 
         salva_memoria(storico)
 
-        await interaction.response.send_message(f"✅ **Match sostituiti con successo!**\n{giocatore1.mention} ora sfida {giocatore3.mention}\n{giocatore2.mention} ora sfida {giocatore4.mention}")
+        await interaction.response.send_message(f"✅ **Match sostituiti con successo!**\n{giocatore1.mention} ora sfida {giocatore2.mention}\n{giocatore3.mention} ora sfida {giocatore4.mention}")
 
 
 @bot.tree.command(name="campi", description="Crea i campi e il loro numero")
