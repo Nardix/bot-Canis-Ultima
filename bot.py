@@ -274,13 +274,11 @@ async def on_ready():
         if canale and hasattr(canale, 'threads'):
             threads_attivi = sorted(canale.threads, key=lambda t: t.id, reverse=True)
             
-            if threads_attivi:
-                ultimo_thread = threads_attivi[0]
-                
+            for thread in threads_attivi:                
                 messaggio_sondaggio = None
                 bot_ha_gia_risposto = False
 
-                async for msg in ultimo_thread.history(limit=50):
+                async for msg in thread.history(limit=50):
                     if msg.author == bot.user:
                         bot_ha_gia_risposto = True
                     
@@ -288,7 +286,7 @@ async def on_ready():
                         messaggio_sondaggio = msg
                 
                 if messaggio_sondaggio and not bot_ha_gia_risposto:
-                    await ultimo_thread.send(
+                    await thread.send(
                         "👋 Ciao! Ho visto il sondaggio.\nQuando le iscrizioni sono terminate, clicca qui sotto per generare le coppie casuali tra chi ha votato 'Si'.",
                         view=GeneraCoppieView()
                     )
