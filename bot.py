@@ -276,16 +276,13 @@ async def on_ready():
             
             for thread in threads_attivi:                
                 messaggio_sondaggio = None
-                bot_ha_gia_risposto = False
 
                 async for msg in thread.history(limit=50):
-                    if msg.author == bot.user:
-                        bot_ha_gia_risposto = True
                     
                     if msg.poll and not messaggio_sondaggio:
                         messaggio_sondaggio = msg
                 
-                if messaggio_sondaggio and not bot_ha_gia_risposto:
+                if messaggio_sondaggio:
                     await thread.send(
                         "👋 Ciao! Ho visto il sondaggio.\nQuando le iscrizioni sono terminate, clicca qui sotto per generare le coppie casuali tra chi ha votato 'Si'.",
                         view=GeneraCoppieView()
